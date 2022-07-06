@@ -9,7 +9,7 @@ const int TASK_MAX_THRESHOLD = 1024;
 ThreadPool::ThreadPool()
     : initThreadSize_(0)
     , taskSize_(0)
-    , taskQueMaxSizeThreshold(TASK_MAX_THRESHOLD)
+    , taskQueMaxSizeThreshold_(TASK_MAX_THRESHOLD)
     , poolMode(PoolMode::MODE_FIXED){
 }
 
@@ -27,7 +27,7 @@ void ThreadPool::setMode(PoolMode mode) {
 
 /// 设置任务队列上限阈值
 void ThreadPool::setTaskQueMaxThreshHold(int threshold) {
-    taskQueMaxSizeThreshold = threshold;
+    taskQueMaxSizeThreshold_ = threshold;
 }
 
 /// 设置初始的线程数量
@@ -58,7 +58,7 @@ void ThreadPool::start(int initThreadSize) {
     for (int i = 0; i < initThreadSize_; ++i) {
         threads_[i]->start();   //去执行一个线程函数
     }
-};
+}
 
 /// 给线程池提交任务 用户调用该接口，传入任务对象 生产任务
 void ThreadPool::submitTask(std::shared_ptr<Task> sp) {
