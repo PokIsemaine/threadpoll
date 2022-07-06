@@ -7,6 +7,7 @@
 #include <atomic>
 #include <mutex>
 #include <condition_variable>
+#include <functional>
 
 
 /**
@@ -25,7 +26,7 @@ public:
  * @brief 线程池支持的模式
  * 
  */
-enum  class PoolMode {
+enum class PoolMode {
 	/// 固定数量的线程
 	MODE_FIXED,	
 	/// 线程数量可动态增长
@@ -39,12 +40,18 @@ enum  class PoolMode {
  */
 class Thread {
 public:
-    Thread();
+    /// 线程函数对象类型
+    using ThreadFunc = std::function<void()>;
+
+    /// 线程构造
+    Thread(ThreadFunc func);
+    /// 线程析构
     ~Thread();
-
+    /// 启动线程
     void start();
-private:
 
+private:
+    ThreadFunc func_;
 };
 
 
@@ -86,9 +93,11 @@ private:
 
 private:
 	/// 线程列表
-	std::vector<Thread*> threads_;	
-
-	/// 初始线程数量
+    ///	std::vector<Thread*> threads_;
+    /// vector 会自动调用存的东西的析构，但是存裸指针的话还要手动析构
+    /// 使用 unique_ptr 来管理指针的析构
+    std::vector<std::unique_ptr<Thread>> threads_;
+    /// 初始线程数量
 	std::size_t initThreadSize_;	
 
 	
@@ -103,7 +112,7 @@ private:
 	std::atomic_uint taskSize_; 
 
 	/// 任务队列数量上限的阈值
-	int taskQueMaxSizeThreshold;
+	int taskQueMaxSizeThreshold_;
 
 	/// 保证任务队列线程安全
 	std::mutex taskQueMtx_;
@@ -112,10 +121,10 @@ private:
 	// 生产者消费者模式要两个条件变量
 
 	/// 任务队列不满
-	std::condition_variable notFull;
+	std::condition_variable notFull_;
 
 	/// 任务队列不空
-	std::condition_variable notEmpty;
+	std::condition_variable notEmpty_;
 
 	/// 当前线程池模式
 	PoolMode poolMode;
