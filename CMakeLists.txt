@@ -7,4 +7,5 @@ include_directories(.)
 
 add_executable(threadpool
         threadpool.hpp
-        threadpool.cpp)
+        threadpool.cpp
+        test.cpp)
