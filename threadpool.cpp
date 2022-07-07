@@ -14,9 +14,7 @@ ThreadPool::ThreadPool()
 }
 
 /// 线程池析构
-ThreadPool::~ThreadPool() {
-
-}
+ThreadPool::~ThreadPool() {}
 
 
 
@@ -70,8 +68,14 @@ void ThreadPool::submitTask(std::shared_ptr<Task> sp) {
 //        notFull_.wait(lock);
 //    }
 //  下面是 C++11 的简化写法
-    notFull_.wait(lock, [&]()->bool {return taskQue_.size() < taskQueMaxSizeThreshold_;});
-    // 用户提交任务，最长不能阻塞超过 1s, 否则盘大u你提交任务失败，返回
+//    notFull_.wait(lock, [&]()->bool {return taskQue_.size() < taskQueMaxSizeThreshold_;});
+    // 用户提交任务，最长不能阻塞超过 1s, 否则盘大u你提交任务失败，返回 wait_for wait_until
+    if(!notFull_.wait_for(lock,std::chrono::seconds(1),
+                      [&]()->bool {return taskQue_.size() < taskQueMaxSizeThreshold_;})) {
+        // 表示 notFull_ 等待 1s, 条件依然没满足
+        std::cerr << "task queue is full, submit task fail." << std::endl;
+        return;
+    }
 
     // 如果有空余，把任务放到任务队列中
     taskQue_.emplace(sp);
@@ -83,10 +87,44 @@ void ThreadPool::submitTask(std::shared_ptr<Task> sp) {
 
 /// 定义线程函数 线程池的所有线程从任务队列里 消费任务
 void ThreadPool::threadFunc() {
-    std::cout << "begin threadFunc " << std::this_thread::get_id()
-                << std::endl;
-    std::cout << "end threadFunc " << std::this_thread::get_id()
-                 << std::endl;
+//    std::cout << "begin threadFunc " << std::this_thread::get_id()
+//                << std::endl;
+//    std::cout << "end threadFunc " << std::this_thread::get_id()
+//                 << std::endl;
+    for(;;) {
+        std::shared_ptr<Task> task;
+        {
+            // 先取锁
+            std::unique_lock<std::mutex> lock(taskQueMtx_);
+            std::cout << "tid:"<< std::this_thread::get_id()
+                      << "尝试获取任务..." << std::endl;
+
+            // 等待 notEmpty_ 条件
+            notEmpty_.wait(lock,[&]()->bool {return !taskQue_.empty(); });
+
+            std::cout << "tid:"<< std::this_thread::get_id()
+                      << "获取任务成功..." << std::endl;
+
+            // 从任务队列中取一个任务出来
+            task = taskQue_.front();
+            taskQue_.pop();
+            --taskSize_;
+
+            // 如果依然有剩余任务，继续通知其他的线程执行任务
+            if(!taskQue_.empty()) {
+                notEmpty_.notify_all();
+            }
+
+            // 取出一个任务，进行通知,通知可以继续提交生产任务
+            notFull_.notify_all();
+        }   // 取完任务就释放锁了，执行任务的时候不应该拿着锁占时间
+
+        // 当前线程负责执行这个任务
+        if(task != nullptr) {
+            task->run();
+            // 执行完一个任务
+        }
+    }
 }
 
 

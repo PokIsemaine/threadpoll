@@ -57,7 +57,17 @@ private:
 
 /**
  * @brief 线程池类型
- * 
+ * @example
+ * ThreadPool pool
+ * pool.start();
+ *
+ * class MyTask : public Task {
+ *  public:
+ *      void run() {// 线程代码 ...}
+ * }
+ *
+ * pool.sumbitTask(std::make_shared<MyTask>());
+ *
  */
 class ThreadPool {
 public:
