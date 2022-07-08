@@ -16,8 +16,6 @@ ThreadPool::ThreadPool()
 /// 线程池析构
 ThreadPool::~ThreadPool() {}
 
-
-
 /// 设置线程池模式
 void ThreadPool::setMode(PoolMode mode) {
     poolMode = mode;
@@ -59,7 +57,7 @@ void ThreadPool::start(int initThreadSize) {
 }
 
 /// 给线程池提交任务 用户调用该接口，传入任务对象 生产任务
-void ThreadPool::submitTask(std::shared_ptr<Task> sp) {
+Result ThreadPool::submitTask(std::shared_ptr<Task> sp) {
     // 获取锁
     std::unique_lock<std::mutex> lock(taskQueMtx_);
 
@@ -74,7 +72,10 @@ void ThreadPool::submitTask(std::shared_ptr<Task> sp) {
                       [&]()->bool {return taskQue_.size() < taskQueMaxSizeThreshold_;})) {
         // 表示 notFull_ 等待 1s, 条件依然没满足
         std::cerr << "task queue is full, submit task fail." << std::endl;
-        return;
+        // return task->getResult(); Task Result 考虑清楚生命周期
+        // 线程执行完 task, task 对象就被析构掉了，result 依赖task 所以也不行，用下面的
+        // 提交失败还要设置返回值无效
+        return Result(sp, false);
     }
 
     // 如果有空余，把任务放到任务队列中
@@ -83,6 +84,12 @@ void ThreadPool::submitTask(std::shared_ptr<Task> sp) {
 
     // 因为新放了任务，任务队列肯定不空了，在 notEmpty_ 上进行通知, 赶快分配线程执行任务 （消费）
     notEmpty_.notify_all();
+
+    // 返回任务的 Result 对象
+    // return task->getResult();
+
+    return Result(sp);
+
 }
 
 /// 定义线程函数 线程池的所有线程从任务队列里 消费任务
@@ -121,8 +128,10 @@ void ThreadPool::threadFunc() {
 
         // 当前线程负责执行这个任务
         if(task != nullptr) {
-            task->run();
-            // 执行完一个任务
+            //  task->run();
+            // 执行完一个任务, 把任务的返回值 setVal 方法给到 Result
+            // 封装一个方法
+            task->exec();
         }
     }
 }
@@ -143,4 +152,47 @@ void Thread::start() {
 
     //分离线程对象和执行的线程函数
     t.detach(); // 设置分离线程 = pthread_detach 防止孤儿线程
+}
+
+//////////////////////// Result 方法实现
+
+Result::Result(std::shared_ptr<Task> task, bool isValid)
+    : isValid_(isValid)
+    , task_(task)
+{
+    task_->setResult(this);
+}
+
+/// 用户调用
+Any Result::get() {
+    if(!isValid_) {
+        return "";
+    }
+    sem_.wait();        // task 任务如果没有执行完，这里会阻塞用户的线程
+    return std::move(any_);
+}
+
+///
+void Result::setVal(Any any) {
+    // 存储 task 的返回值
+    this->any_ = std::move(any);
+    // 已经获取的任务返回值，增加信号量资源
+    sem_.post();
+}
+
+
+//////////////////////// Task 方法实现
+
+Task::Task()
+    : result_(nullptr)
+{}
+
+void Task::exec() {
+    if(result_ != nullptr) {
+        result_->setVal(run()); // 这里发生多态调用
+    }
+}
+
+void Task::setResult(Result* res) {
+    result_ = res;
 }

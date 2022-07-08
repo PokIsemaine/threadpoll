@@ -11,14 +11,144 @@
 
 
 /**
- * @brief 任务抽象积累
- * @note 用户可以自定义任务数据类型，从 Task 继承
- *			重写 run 方法，实现自定义任务处理
+ * @brief Any类型： 可以接收任意数据的类型
+ * @note 任意的其他类型 temple
+ *      能让一个类型 指向 其他任意的类型 ： 基类指向派生类类型
+ *                        -----------------------
+ *      Any =》 Base* --> * Derive:public Base  *
+ *                        * template data       * <------- 把任意数据类型包含在 Derive 中
+ *                        -----------------------
+ */
+class Any {
+public:
+    Any() = default;
+    ~Any() = default;
+    Any(const Any&) = delete;
+    Any& operator=(const Any&) = delete;
+    Any(Any&&) = default;
+    Any& operator=(Any&&) = default;
+
+    /// 这个构造函数可以让 Any 类型接收任意其他的数据
+    template<typename T>
+    Any(T data) : base_(std::make_unique<Derive<T>>(data))
+    {}
+
+    /// 这个方法能把 Any 对象里面存储的 data 数据提取出来
+    template<typename T>
+    T cast_() {
+        // 我们怎么从 base_ 找到它所指向的 Derive 对象，从它里面取出 data 成员变量
+        // 基类指针转为派生类指针 dynamic_cast  基类类型指针要确实指向派生类对象 RTTI
+        Derive<T> * pd = dynamic_cast<Derive<T>*>(base_.get());
+        if(pd == nullptr) { // 类型不匹配
+            throw "type is unmatch!";
+        }
+        return pd->date_;
+    }
+private:
+
+    class Base {
+    public:
+        virtual ~Base() = default;
+    };
+
+    template<typename T>
+    class Derive : public Base {
+    public:
+        Derive(T data) : date_(data)
+        {}
+        /// 保存了任意其他类型
+        T date_;
+    };
+private:
+    /// 定义一个基类指针
+    std::unique_ptr<Base> base_;
+};
+
+
+/**
+ * @brief 实现一个信号量用于通信
+ * @note
+ *      提交任务的线程和z执行任务的线程不是一个，所以要线程通信(semaphore)
+ *          submitTask线程            执行task线程
+ *               |                      |
+ *   ---<-- submitTask                  |
+ *   |           |                      |
+ * Result        |                      |
+ *   |           |                      |
+ *   ------->res.get 阻塞                |
+ *               |   ^                  |
+ *               |   |                  |
+ *               |   ---semaphore-----task执行完
+ */
+
+class Semaphore {
+public:
+    Semaphore(int limit = 0)
+        : resLimit_(limit)
+    {}
+    ~Semaphore() = default;
+
+    /// 获取一个信号量资源
+    void wait() {
+        std::unique_lock<std::mutex> lock(mtx_);
+        // 等待信号量有资源，没有资源的话，会阻塞当前线程
+        cond_.wait(lock,[&]()->bool {return resLimit_ > 0;});
+        resLimit_--;
+    }
+    /// 增加一个信号量资源
+    void post() {
+        std::unique_lock<std::mutex> lock(mtx_);
+        resLimit_++;
+        cond_.notify_all();
+    }
+private:
+    int resLimit_;
+    std::mutex mtx_;
+    std::condition_variable cond_;
+};
+
+class Task;
+
+/**
+ * @brief 实现接收提交到线程池的 task 任务执行完成后的返回值类型 Result
+ */
+class Result {
+public:
+    Result(std::shared_ptr<Task> task, bool isValid = true);
+    ~Result() = default;
+
+    /// setVal 方法，获取任务执行完的返回值
+    void setVal(Any any);
+
+    /// get 方法，用户调用这个方法获取 task 的返回值
+    Any get();
+private:
+    /// 存储任务的返回值
+    Any any_;
+    /// 线程通信信号量
+    Semaphore sem_;
+    /// 执行对应获的任务对象, 强智能指针，task 引用计数不为 0 不会析构
+    std::shared_ptr<Task> task_;
+    /// 返回值是否有效
+    std::atomic_bool isValid_;
+};
+
+/**
+ * @brief 任务抽象基类
  * 
  */
 class Task {
 public:
-	virtual void run() = 0;		
+    Task();
+    ~Task() = default;
+    void exec();
+    void setResult(Result* res);
+
+    ///用户可以自定义任务数据类型，从 Task 继承重写 run 方法，实现自定义任务处理
+	virtual Any run() = 0;
+private:
+    /// 如果强智能指针的话就循环引用了, Result 对象生命周期长于 Task
+    Result* result_;
 };
 
 
@@ -90,7 +220,7 @@ public:
 	void setInitThreadSize(int size);
 
 	/// 给线程池提交任务
-	void submitTask(std::shared_ptr<Task> sp);
+	Result submitTask(std::shared_ptr<Task> sp);
 
 
 	/// 禁止拷贝构造和赋值
