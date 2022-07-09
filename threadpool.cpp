@@ -22,12 +22,13 @@ ThreadPool::ThreadPool()
 /// 线程池析构 用户的线程（需要线程通信）
 ThreadPool::~ThreadPool() {
     isPoolRunning_ = false;
-    // 先都给唤醒了
-    notEmpty_.notify_all();
+
 
     // 等待线程池所有的线程返回 两种状态：阻塞 & 正在执行任务中
-    std::unique_lock<std::mutex> lock(taskQueMtx_);
-    // 等待容器里的线程对象都清空了才析构
+    std::unique_lock<std::mutex> lock(taskQueMtx_);\
+    // 都给唤醒了
+    notEmpty_.notify_all();// 等待 ==> 阻塞
+    // 等待容器里的线程对象都清空了才析构,每个线程回收的时候会唤醒 exitCond_ 来检查是否满足条件
     exitCond_.wait(lock,[&]()->bool {return threads_.size() == 0;});
 
 }
@@ -144,47 +145,43 @@ void ThreadPool::threadFunc(int threadid) { // 线程函数返回，相应的线
             std::unique_lock<std::mutex> lock(taskQueMtx_);
             std::cout << "tid:"<< std::this_thread::get_id() << "尝试获取任务..." << std::endl;
 
+            // 锁 + 双重判断
+            while(isPoolRunning_ && taskQue_.size() == 0) {   // 任务队列没任务，就等 1s 看看情况；有任务就直接出去消费
+                if (poolMode_ == PoolMode::MODE_CACHED) {
+                    // cached 模式下，有可能已经创建了很多的线程，但是空闲时间超过 60s
+                    // 超过 initThreadSize_ 数量的线程要进行回收
+                    // 当前时间 - 上次线程执行的时间 > 60s
+                    // 每 1s 中返回一次 怎么区分超时返回还是有任务待执行返回？
 
-                while(taskQue_.size() == 0) {   // 任务队列没任务，就等 1s 看看情况；有任务就直接出去消费
-                    if (poolMode_ == PoolMode::MODE_CACHED) {
-                        // cached 模式下，有可能已经创建了很多的线程，但是空闲时间超过 60s
-                        // 超过 initThreadSize_ 数量的线程要进行回收
-                        // 当前时间 - 上次线程执行的时间 > 60s
-                        // 每 1s 中返回一次 怎么区分超时返回还是有任务待执行返回？
+                    if (std::cv_status::timeout ==
+                        notEmpty_.wait_for(lock, std::chrono::seconds(1))) {
+                        // 1s 后还是没任务 条件变量超时返回 检查如果线程空闲了 60s 那就回收掉
+                        auto now = std::chrono::high_resolution_clock().now();
+                        auto dur = std::chrono::duration_cast<std::chrono::seconds>(now - lastTime);
+                        if (dur.count() >= THREAD_MAX_IDLE_TIME
+                            && curThreadSize_ > initThreadSize_) {
+                            // 开始回收当前线程
+                            // 记录线程数量的相关变量的值修改
+                            // 把线程对象从线程列表容器中回收 没有办法匹配 threadFunc 是哪一个 Thread 对象
+                            // thread id => thread 对象 => 删除
+                            threads_.erase(threadid);   // 不要 std::this_thread::get_id()
+                            curThreadSize_--;
+                            idleThreadSize_--;
 
-                        if (std::cv_status::timeout ==
-                            notEmpty_.wait_for(lock, std::chrono::seconds(1))) {
-                            // 1s 后还是没任务 条件变量超时返回 检查如果线程空闲了 60s 那就回收掉
-                            auto now = std::chrono::high_resolution_clock().now();
-                            auto dur = std::chrono::duration_cast<std::chrono::seconds>(now - lastTime);
-                            if (dur.count() >= THREAD_MAX_IDLE_TIME
-                                && curThreadSize_ > initThreadSize_) {
-                                // 开始回收当前线程
-                                // 记录线程数量的相关变量的值修改
-                                // 把线程对象从线程列表容器中回收 没有办法匹配 threadFunc 是哪一个 Thread 对象
-                                // thread id => thread 对象 => 删除
-                                threads_.erase(threadid);   // 不要 std::this_thread::get_id()
-                                curThreadSize_--;
-                                idleThreadSize_--;
-
-                                std::cout << "threadid:" << std::this_thread::get_id() << "exit" << std::endl;
-                                // 通知一下主线程
-                                exitCond_.notify_all();
-                                return;
-                            }
+                            std::cout << "threadid:" << std::this_thread::get_id() << "exit" << std::endl;
+                            // 通知一下主线程
+                            exitCond_.notify_all();
+                            return;
                         }
-                    } else {
-                        notEmpty_.wait(lock);
                     }
-
-                    // 因为线程池要结束被唤醒
-                    if(!isPoolRunning_) {
-                        // 反正要结束了也不用维护那些变量了
-                        threads_.erase(threadid);
-                        std::cout << "threadid:" << std::this_thread::get_id() << "exit" << std::endl;
-                        return;
-                    }
+                } else {
+                    notEmpty_.wait(lock);
                 }
+            }
+
+            if(!isPoolRunning_) {
+                break;
+            }
 
 
             std::cout << "tid:"<< std::this_thread::get_id() << "获取任务成功..." << std::endl;

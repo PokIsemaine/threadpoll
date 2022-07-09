@@ -24,7 +24,7 @@ public:
             sum += i;
         }
 
-        std::this_thread::sleep_for(std::chrono::seconds(3));
+//        std::this_thread::sleep_for(std::chrono::seconds(3));
 
         std::cout << "tid:"<< std::this_thread::get_id()
                   << "end!" << std::endl;
@@ -38,6 +38,21 @@ private:
 };
 
 int main() {
+    std::cout << "测试死锁" << std::endl;
+    {
+        ThreadPool pool;
+        pool.start(4);
+        Result res1 = pool.submitTask(std::make_shared<MyTask>(1,100000000));
+
+        ULong sum1 = res1.get().cast_<ULong>();
+        std::cout << sum1 << std::endl;
+    }
+    std::cout << "main() over" << std::endl;
+    // 防止没打印完就结束了
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+
+
+#if 0
     // 测试析构后回收线程资源
     {
         ThreadPool pool;
@@ -72,5 +87,7 @@ int main() {
         std::this_thread::sleep_for(std::chrono::seconds(6));
     }
     getchar();
-return 0;
+#endif
+
+    return 0;
 }
