@@ -6,88 +6,52 @@
 #include <chrono>
 #include <thread>
 
-using ULong = unsigned long long;
+using namespace std;
 
-class MyTask : public Task {
-public:
-    MyTask(int begin, int end)
-        : begin_(begin)
-        , end_(end)
-    {}
+/*
+一：如何让线程池提交任务更方便
+    1.pool.submitTask(sum1, 10, 20);
+      pool.submitTask(sum1, 10, 20);
+      ***submitTask:可变参模板编程***
+二：自己写的Result以及相关的类型，代码多
+    c++11的线程库   thread
+                   packaged_task(内部有get_future()方法可以获得任务返回值) <==>   function函数对象（需要自己进行封装）
+                   future<int> res = task.get_future() <==> Result res = submitTask(); + 信号量的实现 + Any类实现
+                   async
+    ***使用future来替代Result 节省线程池代码***
+*/
+int sum1(int a, int b)
+{
+    return a + b;
+}
+int sum2(int a, int b, int c)
+{
+    return a + b + c;
+}
 
-    // 如何设计 run 函数的返回值，可以表示任意的类型
-    // Java Python Object 是所有其他类型的基类 C++17 Any 类型
-    Any run() {
-        std::cout << "tid:"<< std::this_thread::get_id() << "begin!" << std::endl;
-        ULong sum = 0;
-        for(int i = begin_; i < end_; ++i) {
+int main()
+{
+    ThreadPool pool;
+    pool.setMode(PoolMode::MODE_CACHED);
+    pool.start(4);
+
+    future<int> res1 = pool.submitTask(sum1, 1, 2);
+    future<int> res2 = pool.submitTask(sum2, 1, 2, 3);
+    future<int> res3 = pool.submitTask([](int begin, int end)->int {
+        int sum = 0;
+        for(int i = begin; i <= end; i++)
+        {
             sum += i;
         }
-
-//        std::this_thread::sleep_for(std::chrono::seconds(3));
-
-        std::cout << "tid:"<< std::this_thread::get_id()
-                  << "end!" << std::endl;
-
         return sum;
-    }
+    }, 1, 100);
+    future<int> res4 = pool.submitTask(sum1, 1, 2);
+    future<int> res5 = pool.submitTask(sum1, 1, 2);
 
-private:
-    int begin_;
-    int end_;
-};
+    cout << res1.get() << endl;
+    cout << res2.get() << endl;
+    cout << res3.get() << endl;
+    cout << res4.get() << endl;
+    cout << res5.get() << endl;
 
-int main() {
-    std::cout << "测试死锁" << std::endl;
-    {
-        ThreadPool pool;
-        pool.start(4);
-        Result res1 = pool.submitTask(std::make_shared<MyTask>(1,100000000));
-
-        ULong sum1 = res1.get().cast_<ULong>();
-        std::cout << sum1 << std::endl;
-    }
-    std::cout << "main() over" << std::endl;
-    // 防止没打印完就结束了
-    std::this_thread::sleep_for(std::chrono::seconds(5));
-
-
-#if 0
-    // 测试析构后回收线程资源
-    {
-        ThreadPool pool;
-        // 用户设置线程池模式
-        pool.setMode(PoolMode::MODE_CACHED);
-        pool.start(4);
-        // 测试提交任务失败
-        // pool.setTaskQueMaxThreshHold(3);
-
-        Result res1 = pool.submitTask(std::make_shared<MyTask>(1,100000000));
-        Result res2 = pool.submitTask(std::make_shared<MyTask>(100000001,200000000));
-        Result res3 = pool.submitTask(std::make_shared<MyTask>(200000001,300000000));
-        Result res4 = pool.submitTask(std::make_shared<MyTask>(300000001,400000000));
-
-        // 6个任务，4个线程，每个任务 3s 所以线程池动态创建了 2 个出来
-        pool.submitTask(std::make_shared<MyTask>(300000001,400000000));
-        pool.submitTask(std::make_shared<MyTask>(300000001,400000000));
-
-        ULong sum1 = res1.get().cast_<ULong>();
-        ULong sum2 = res2.get().cast_<ULong>();
-        ULong sum3 = res3.get().cast_<ULong>();
-        ULong sum4 = res4.get().cast_<ULong>();
-
-        // 睡 70s 自动回收 2 个多余线程
-//        std::this_thread::sleep_for(std::chrono::seconds(70));
-
-        // Master - Slave 线程模型
-        // Master 线程来分解任务，然后各个Salve线程分配任务
-        // 等待各个 Slave 线程执行完任务，返回结果
-        // Master 线程合并各个任务结果输出
-        std::cout << (sum1 + sum2 + sum3 + sum4) << std::endl;
-        std::this_thread::sleep_for(std::chrono::seconds(6));
-    }
-    getchar();
-#endif
-
-    return 0;
 }
