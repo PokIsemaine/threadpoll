@@ -171,17 +171,20 @@ enum class PoolMode {
 class Thread {
 public:
     /// 线程函数对象类型
-    using ThreadFunc = std::function<void()>;
-
+    using ThreadFunc = std::function<void(int)>;
     /// 线程构造
     Thread(ThreadFunc func);
     /// 线程析构
     ~Thread();
     /// 启动线程
     void start();
-
+    /// 获取线程 id
+    int getId()const;
 private:
     ThreadFunc func_;
+    static int generateId_;
+    /// 保存线程 id
+    int threadId_;
 };
 
 
@@ -216,8 +219,11 @@ public:
 	/// 设置任务队列上限阈值
 	void setTaskQueMaxThreshHold(int threshold);
 
+    /// 设置线程池 cached 模式下线程阈值
+    void setThreadSizeThreshHold(int threshold);
+
 	/// 设置初始的线程数量
-	void setInitThreadSize(int size);
+    void setInitThreadSize(int size);
 
 	/// 给线程池提交任务
 	Result submitTask(std::shared_ptr<Task> sp);
@@ -229,19 +235,28 @@ public:
 
 private:
     /// 定义线程函数
-    void threadFunc();
-
+    void threadFunc(int threadid);
+    /// 检查 pool 运行状态
+    bool checkRunningState() const;
 private:
 	/// 线程列表
     ///	std::vector<Thread*> threads_;
     /// vector 会自动调用存的东西的析构，但是存裸指针的话还要手动析构
     /// 使用 unique_ptr 来管理指针的析构
-    std::vector<std::unique_ptr<Thread>> threads_;
-    /// 初始线程数量
-	std::size_t initThreadSize_;	
+//    std::vector<std::unique_ptr<Thread>> threads_;
+    /// 添加 threadId 来索引 thread 对象
+    std::unordered_map<int,std::unique_ptr<Thread>> threads_;
 
-	
-	// std::queue<Task*> 用户可能传一个临时任务对象
+    /// 初始线程数量
+    int initThreadSize_;
+    /// 记录当前线程池里面的线程数量，不用 threads_.size() 因为不是线程安全的
+    std::atomic_int curThreadSize_;
+    /// 线程数量上限阈值 防止 cached模式 无限增长
+    int threadSizeThreshold_;
+
+
+
+    // std::queue<Task*> 用户可能传一个临时任务对象
 	// 出了提交任务的语句对象就析构了，拿了已经析构的对象就没用了
 	// 使用智能指针保持拉长对象声明周期，自动释放资源
 	
@@ -254,9 +269,13 @@ private:
 	/// 任务队列数量上限的阈值
 	int taskQueMaxSizeThreshold_;
 
+    /// 记录空闲线程数量
+    std::atomic_int idleThreadSize_;
+
+
+
 	/// 保证任务队列线程安全
 	std::mutex taskQueMtx_;
-
 
 	// 生产者消费者模式要两个条件变量
 
@@ -266,8 +285,17 @@ private:
 	/// 任务队列不空
 	std::condition_variable notEmpty_;
 
+    /// 等待线程资源全部回收
+    std::condition_variable exitCond_;
+
+
 	/// 当前线程池模式
-	PoolMode poolMode;
+	PoolMode poolMode_;
+
+    /// 表示线程池是否正在运行, 可能多个线程用到
+    /// 设置模式之前要确保没有在运行
+    std::atomic_bool isPoolRunning_;
+
 };
 
 #endif
